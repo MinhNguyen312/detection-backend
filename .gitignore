@@ -1,0 +1,20 @@
+# Yolov5 model from ultralytics
+yolov5/
+
+# virtual environment
+.venv/
+
+# pycache
+**/__pycache__/
+
+# General Ignore files
+*.pyc
+*.swp
+*.log
+*.egg-info
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+
