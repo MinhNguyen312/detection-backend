@@ -1,14 +1,17 @@
 from fastapi import FastAPI, File
 from fastapi.middleware.cors import CORSMiddleware
+from sys import platform
 from PIL import Image
 from contextlib import asynccontextmanager
 import torch
 import io
-import pathlib
 
+#Uncomment if running on Windows
+if platform == "win32":
+    import pathlib
+    temp = pathlib.PosixPath
+    pathlib.PosixPath = pathlib.WindowsPath
 
-temp = pathlib.PosixPath
-pathlib.PosixPath = pathlib.WindowsPath
 
 # On startup, load the model
 @asynccontextmanager
@@ -56,7 +59,8 @@ async def upload(file: bytes = File(...)):
     
     results = model(Image.open(io.BytesIO(file)))
 
-    pathlib.PosixPath = temp
+    if platform == "win32":
+        pathlib.PosixPath = temp         
 
     json_results = results_to_json(results, model)
 
@@ -69,7 +73,12 @@ def results_to_json(results, model):
           {
           "class": int(pred[5]),
           "class_name": model.model.names[int(pred[5])],
-          "bbox": [int(x) for x in pred[:4].tolist()], #convert bbox results to int from float
+          "bbox": [
+                float(((pred[0] + pred[2]) / 2) / 416),  # xcenter
+                float(((pred[1] + pred[3]) / 2) /416),  # ycenter
+                float((pred[2] - pred[0])/416),        # width
+                float((pred[3] - pred[1])/416)       # height
+                ],
           "confidence": float(pred[4]),
           }
         for pred in result
