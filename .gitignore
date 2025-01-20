@@ -3,6 +3,8 @@ yolov5/
 
 # virtual environment
 .venv/
+venv/
+
 
 # pycache
 **/__pycache__/
