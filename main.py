@@ -51,9 +51,6 @@ s3 = boto3.client(
 BUCKET_NAME = "lung.images"
 
 
-
-
-
 # On startup, load the model
 @asynccontextmanager
 async def lifespan(app: FastAPI):
