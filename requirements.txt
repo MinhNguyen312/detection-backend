@@ -11,3 +11,6 @@ opencv-python-headless
 requests
 torch
 torchvision
+sqlalchemy
+psycopg2-binary
+boto3
