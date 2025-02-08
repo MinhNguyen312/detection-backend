@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
-from typing import List
+from typing import List, Dict, Any, Optional
 
 class ScanImageCreate(BaseModel):
     user_id: int
@@ -19,6 +19,7 @@ class NoduleCreate(BaseModel):
     doctor_note: str
     intensity: str
     size: str
+    parameters: Optional[Dict[str, Any]] = None  # New field for JSONB
 
 class DiagnosisCreate(BaseModel):
     image_id: int

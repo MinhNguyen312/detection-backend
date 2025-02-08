@@ -1,10 +1,13 @@
-from fastapi import FastAPI, File, Depends, HTTPException
+from fastapi import FastAPI, File, Depends, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sys import platform
 from PIL import Image
 from contextlib import asynccontextmanager
 import torch
 import io
+import os
+from fastapi.responses import FileResponse
 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -142,6 +145,32 @@ def view_diagonsis(db: Session = Depends(get_db)):
 
     return response
 
+# API endpoint to get diagnosis by id
+@app.get('/view-diagnosis/{diagnosis_id}')
+def view_diagonsis(diagnosis_id: int, db: Session = Depends(get_db)):
+    # Query the database
+    result = db.query(Diagnosis, Patient, ScanImage, NoduleObject)\
+        .join(ScanImage, Diagnosis.image_id == ScanImage.image_id)\
+        .join(Patient, ScanImage.patient_id == Patient.patient_id)\
+        .join(NoduleObject, Diagnosis.nodule_id == NoduleObject.nodule_id)\
+        .filter(Diagnosis.diagnosis_id == diagnosis_id)\
+        .first()
+    
+    diagnosis,patient,image,nodule = result
+
+    # Format the response
+    response = {
+        "diagnosis_id": diagnosis.diagnosis_id,
+        "patient_first_name": patient.firstname,
+        "patient_last_name": patient.lastname,
+        "date": "15/10/2024",
+        "photo_path": image.photo_path,
+        "nodule_position": nodule.position,
+        "nodules": nodule.parameters.get("nodules")
+    }
+
+    return response
+
 
 PATH = './model/best.pt'
 model = None
@@ -189,13 +218,15 @@ Example:
         ]
 """
 @app.post('/upload')
-async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
+async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
     global model
     if model is None:
         return {"error":"Model not initialized"}
     
-    image = Image.open(io.BytesIO(file))
+    contents = await file.read()
+    
+    image = Image.open(io.BytesIO(contents))
 
     # Save the image to local storage
     unique_image_name = f"{uuid.uuid4()}.{image.format.lower()}"
@@ -232,34 +263,67 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
     # Push the data onto the database
     await push_image(image_to_push, db)
 
+    # Get the latest image id that was recently added
+    latest_image_id = await get_latest_image_id(db)
+
+    # Create list of nodules
+    nodules = []
+
     # Iterate through each nodule object returned by the AI after analyzing the uploaded image and add those nodules metadata into the db
     for index in range(len(json_results[0])):
-        # Get the latest image id that was recently added
-        latest_image_id = await get_latest_image_id(db)
-
         # Prepping the information needed for the nodule
-        new_nodule_type_id = 1 # Placeholder
-        new_position = json_results[0][index].get('bbox')
-        new_doctor_note = "Lung Problem" # Placeholder
-        new_intensity = "Moderate" # Placeholder
-        new_size = "Small" # Placeholder
+       
 
-        # Creating the nodule to add into the db
-        nodule_to_add = NoduleCreate(image_id=latest_image_id,
+        # # Creating the nodule to add into the db
+        # nodule_to_add = NoduleCreate(image_id=latest_image_id,
+        #                              nodule_type_id=new_nodule_type_id,
+        #                              position=new_position,
+        #                              doctor_note=new_doctor_note,
+        #                              intensity=new_intensity,
+        #                              size=new_size)
+        
+        # # add the ongoing specified nodule
+        # await push_nodule(nodule_to_add, db)
+
+        print(json_results[0][index].get('bbox'))
+        print(json_results[0][index].get('confidence'))
+
+        nodules.append({"position": json_results[0][index].get('bbox'),
+                        "confidence": json_results[0][index].get('confidence')})
+    
+    print(nodules)
+    new_nodule_type_id = 1 # Placeholder
+    # new_position = json_results[0][index].get('bbox')
+    new_doctor_note = "Lung Problem" # Placeholder
+    new_intensity = "Moderate" # Placeholder
+    new_size = "Small" # Placeholder
+
+
+    # Creating the nodule to add into the db
+    nodule_to_add = NoduleCreate(image_id=latest_image_id,
                                      nodule_type_id=new_nodule_type_id,
-                                     position=new_position,
+                                     position=[],
                                      doctor_note=new_doctor_note,
                                      intensity=new_intensity,
-                                     size=new_size)
+                                     size=new_size,
+                                     parameters={"nodules": nodules})
+    
+    # add the ongoing specified nodule
+    await push_nodule(nodule_to_add, db)
         
-        # add the ongoing specified nodule
-        await push_nodule(nodule_to_add, db)
-        
-        # Prepping the information needed for diagnosis
-        latest_nodule_id = await get_latest_nodule_id(db)
-        new_status = "" # Placeholder
-        new_diagnosis_description = "" # Placeholder 
+    # Prepping the information needed for diagnosis
+    latest_nodule_id = await get_latest_nodule_id(db)
+    new_status = "" # Placeholder
+    new_diagnosis_description = "" # Placeholder 
 
+    try:
+        # Upload the image to S3
+        s3_key = f"uploads/{uuid.uuid4()}.{image.format.lower()}"
+        with local_file_path.open("rb") as f:
+            s3.upload_fileobj(f, BUCKET_NAME, s3_key)
+
+        
+        
         # Creating the diagnosis to add
         diagnosis_to_add = DiagnosisCreate(image_id=latest_image_id,
                                            nodule_id=latest_nodule_id,
@@ -268,17 +332,9 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
         
         await push_diagnosis(diagnosis_to_add, db)
 
-    try:
-        # Upload the image to S3
-        s3_key = f"uploads/{uuid.uuid4()}.{image.format.lower()}"
-        with local_file_path.open("rb") as f:
-            s3.upload_fileobj(f, BUCKET_NAME, s3_key)
-
         return json_results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
-
     
 """
 Format the predicted data returned by the AI into a JSON format.
@@ -375,14 +431,16 @@ async def get_latest_image_id(db: Session):
         raise HTTPException(status_code=500, detail=f"An error occured: {str(e)}" )
 
 async def push_nodule(nodule: NoduleCreate, db: Session):
+    print("Pushing nodule")
     try:
         new_nodule = NoduleObject(image_id=nodule.image_id,
                                   nodule_type_id=nodule.nodule_type_id,
                                   position=nodule.position,
                                   doctor_note=nodule.doctor_note,
                                   intensity=nodule.intensity,
-                                  size=nodule.size)
-        
+                                  size=nodule.size,
+                                  parameters=nodule.parameters)
+
         db.add(new_nodule)
         db.commit()
         db.refresh(new_nodule)
@@ -396,11 +454,11 @@ async def push_nodule(nodule: NoduleCreate, db: Session):
                 "doctor_note": new_nodule.doctor_note,
                 "intensity": new_nodule.intensity,
                 "size": new_nodule.size,
-
-
             }
         }
+    
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 """
@@ -459,3 +517,25 @@ async def push_diagnosis(diagnosis: DiagnosisCreate, db: Session):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    
+"""
+Get uploaded Image from local storage
+"""
+app.mount("/uploads", StaticFiles(directory=LOCAL_UPLOAD_DIR), name="uploads")
+
+@app.get('/images/{image_name}')
+async def get_image(image_name: str, db:Session = Depends(get_db)):
+    image = db.query(ScanImage).filter(ScanImage.image_name == image_name).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found") 
+    
+    relative_path = Path(image.photo_path)
+    if not relative_path.is_file():
+        return {"error": "Image not found on the server"}
+    
+    return FileResponse(relative_path)
+
+    # return {
+    #     "image_id": image.image_id,
+    #     "photo_path": image_url
+    # }
