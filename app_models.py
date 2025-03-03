@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date
+from sqlalchemy import Column, Integer, String, JSON, Date
 from database import Base
 
 class Diagnosis(Base):
@@ -51,9 +51,9 @@ class NoduleObject(Base):
     nodule_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     image_id = Column(Integer)
     nodule_type_id = Column(Integer)
-    position = Column(Float)
     doctor_note = Column(String)
     intensity = Column(String)
     size = Column(String)
+    properties = Column(JSON)
 
 

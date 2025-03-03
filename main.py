@@ -12,7 +12,7 @@ from database import Base, engine, get_db
 from pathlib import Path
 
 from app_models import Diagnosis, Patient, ScanImage, NoduleObject
-from schemas import ScanImageCreate, NoduleCreate, DiagnosisCreate
+from schemas import ScanImageCreate, NoduleCreate, DiagnosisCreate, BoundingBox, BoundingBoxRequest
 import json
 import boto3
 import uuid
@@ -239,7 +239,7 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
 
         # Prepping the information needed for the nodule
         new_nodule_type_id = 1 # Placeholder
-        new_position = json_results[0][index].get('bbox')
+        new_properties = json_results
         new_doctor_note = "Lung Problem" # Placeholder
         new_intensity = "Moderate" # Placeholder
         new_size = "Small" # Placeholder
@@ -247,7 +247,7 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
         # Creating the nodule to add into the db
         nodule_to_add = NoduleCreate(image_id=latest_image_id,
                                      nodule_type_id=new_nodule_type_id,
-                                     position=new_position,
+                                     properties= new_properties,
                                      doctor_note=new_doctor_note,
                                      intensity=new_intensity,
                                      size=new_size)
@@ -279,7 +279,26 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-    
+# @app.post('/add-nodule')
+# async def addNodule(bounding_box_request: BoundingBoxRequest, db: Session):
+#     try:
+#         # Retrieve the current image id
+#         # Create a new NoduleObject based on the bounding box
+#         # Push that NoduleObject onto the database
+
+#         current_image_id = bounding_box_request.image_id
+#         bounding_box_list = bounding_box_request.bounding_box_list
+
+
+
+#         # new_nodule = NoduleObject(image_id=nodule.image_id,
+#         #                           nodule_type_id=nodule.nodule_type_id,
+#         #                           position=nodule.position,
+#         #                           doctor_note=nodule.doctor_note,
+#         #                           intensity=nodule.intensity)
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
 """
 Format the predicted data returned by the AI into a JSON format.
 
@@ -308,6 +327,7 @@ def results_to_json(results, model):
         ]
       for result in results.xyxy
       ]
+
 
 """
 Push the passed in image's metadata onto the database.
@@ -378,10 +398,10 @@ async def push_nodule(nodule: NoduleCreate, db: Session):
     try:
         new_nodule = NoduleObject(image_id=nodule.image_id,
                                   nodule_type_id=nodule.nodule_type_id,
-                                  position=nodule.position,
                                   doctor_note=nodule.doctor_note,
                                   intensity=nodule.intensity,
-                                  size=nodule.size)
+                                  size=nodule.size,
+                                  properties=nodule.properties)
         
         db.add(new_nodule)
         db.commit()
@@ -392,7 +412,7 @@ async def push_nodule(nodule: NoduleCreate, db: Session):
             "data": {
                 "image_id": new_nodule.image_id,
                 "nodule_type_id": new_nodule.nodule_type_id,
-                "position": new_nodule.position,
+                "properties": new_nodule.properties,
                 "doctor_note": new_nodule.doctor_note,
                 "intensity": new_nodule.intensity,
                 "size": new_nodule.size,
@@ -459,3 +479,6 @@ async def push_diagnosis(diagnosis: DiagnosisCreate, db: Session):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    
+
+
