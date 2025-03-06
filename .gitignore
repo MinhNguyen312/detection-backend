@@ -19,4 +19,10 @@ venv/
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Key
+config.json
+
+# Ignore all files in the uploads directory
+uploads/
+
 

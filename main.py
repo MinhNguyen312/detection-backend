@@ -1,10 +1,13 @@
-from fastapi import FastAPI, File, Depends, HTTPException
+from fastapi import FastAPI, File, Depends, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sys import platform
 from PIL import Image
 from contextlib import asynccontextmanager
 import torch
 import io
+import os
+from fastapi.responses import FileResponse
 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -142,6 +145,32 @@ def view_diagonsis(db: Session = Depends(get_db)):
 
     return response
 
+# API endpoint to get diagnosis by id
+@app.get('/view-diagnosis/{diagnosis_id}')
+def view_diagonsis(diagnosis_id: int, db: Session = Depends(get_db)):
+    # Query the database
+    result = db.query(Diagnosis, Patient, ScanImage, NoduleObject)\
+        .join(ScanImage, Diagnosis.image_id == ScanImage.image_id)\
+        .join(Patient, ScanImage.patient_id == Patient.patient_id)\
+        .join(NoduleObject, Diagnosis.nodule_id == NoduleObject.nodule_id)\
+        .filter(Diagnosis.diagnosis_id == diagnosis_id)\
+        .first()
+    
+    diagnosis,patient,image,nodule = result
+
+    # Format the response
+    response = {
+        "diagnosis_id": diagnosis.diagnosis_id,
+        "patient_first_name": patient.firstname,
+        "patient_last_name": patient.lastname,
+        "date": "15/10/2024",
+        "photo_path": image.photo_path,
+        "nodule_position": nodule.position,
+        "nodules": nodule.properties.get("nodules")
+    }
+
+    return response
+
 
 PATH = './model/best.pt'
 model = None
@@ -189,13 +218,15 @@ Example:
         ]
 """
 @app.post('/upload')
-async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
+async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
     global model
     if model is None:
         return {"error":"Model not initialized"}
     
-    image = Image.open(io.BytesIO(file))
+    contents = await file.read()
+    
+    image = Image.open(io.BytesIO(contents))
 
     # Save the image to local storage
     unique_image_name = f"{uuid.uuid4()}.{image.format.lower()}"
@@ -232,34 +263,67 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
     # Push the data onto the database
     await push_image(image_to_push, db)
 
+    # Get the latest image id that was recently added
+    latest_image_id = await get_latest_image_id(db)
+
+    # Create list of nodules
+    nodules = []
+
     # Iterate through each nodule object returned by the AI after analyzing the uploaded image and add those nodules metadata into the db
     for index in range(len(json_results[0])):
-        # Get the latest image id that was recently added
-        latest_image_id = await get_latest_image_id(db)
-
         # Prepping the information needed for the nodule
-        new_nodule_type_id = 1 # Placeholder
-        new_properties = json_results
-        new_doctor_note = "Lung Problem" # Placeholder
-        new_intensity = "Moderate" # Placeholder
-        new_size = "Small" # Placeholder
+       
 
-        # Creating the nodule to add into the db
-        nodule_to_add = NoduleCreate(image_id=latest_image_id,
+        # # Creating the nodule to add into the db
+        # nodule_to_add = NoduleCreate(image_id=latest_image_id,
+        #                              nodule_type_id=new_nodule_type_id,
+        #                              position=new_position,
+        #                              doctor_note=new_doctor_note,
+        #                              intensity=new_intensity,
+        #                              size=new_size)
+        
+        # # add the ongoing specified nodule
+        # await push_nodule(nodule_to_add, db)
+
+        print(json_results[0][index].get('bbox'))
+        print(json_results[0][index].get('confidence'))
+
+        nodules.append({"position": json_results[0][index].get('bbox'),
+                        "confidence": json_results[0][index].get('confidence')})
+    
+    print(nodules)
+    new_nodule_type_id = 1 # Placeholder
+    # new_position = json_results[0][index].get('bbox')
+    new_doctor_note = "Lung Problem" # Placeholder
+    new_intensity = "Moderate" # Placeholder
+    new_size = "Small" # Placeholder
+
+
+    # Creating the nodule to add into the db
+    nodule_to_add = NoduleCreate(image_id=latest_image_id,
                                      nodule_type_id=new_nodule_type_id,
-                                     properties= new_properties,
+                                     position=[],
                                      doctor_note=new_doctor_note,
                                      intensity=new_intensity,
-                                     size=new_size)
+                                     size=new_size,
+                                     properties={"nodules": nodules})
+    
+    # add the ongoing specified nodule
+    await push_nodule(nodule_to_add, db)
         
-        # add the ongoing specified nodule
-        await push_nodule(nodule_to_add, db)
-        
-        # Prepping the information needed for diagnosis
-        latest_nodule_id = await get_latest_nodule_id(db)
-        new_status = "" # Placeholder
-        new_diagnosis_description = "" # Placeholder 
+    # Prepping the information needed for diagnosis
+    latest_nodule_id = await get_latest_nodule_id(db)
+    new_status = "" # Placeholder
+    new_diagnosis_description = "" # Placeholder 
 
+    try:
+        # Upload the image to S3
+        s3_key = f"uploads/{uuid.uuid4()}.{image.format.lower()}"
+        with local_file_path.open("rb") as f:
+            s3.upload_fileobj(f, BUCKET_NAME, s3_key)
+
+        
+        
         # Creating the diagnosis to add
         diagnosis_to_add = DiagnosisCreate(image_id=latest_image_id,
                                            nodule_id=latest_nodule_id,
@@ -268,36 +332,91 @@ async def upload(file: bytes = File(...), db: Session = Depends(get_db)):
         
         await push_diagnosis(diagnosis_to_add, db)
 
-    try:
-        # Upload the image to S3
-        s3_key = f"uploads/{uuid.uuid4()}.{image.format.lower()}"
-        with local_file_path.open("rb") as f:
-            s3.upload_fileobj(f, BUCKET_NAME, s3_key)
-
-        return json_results
+        return nodules
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-# @app.post('/add-nodule')
-# async def addNodule(bounding_box_request: BoundingBoxRequest, db: Session):
-#     try:
-#         # Retrieve the current image id
-#         # Create a new NoduleObject based on the bounding box
-#         # Push that NoduleObject onto the database
+@app.post('/update-nodules')
+async def update_nodules(bounding_box_request: BoundingBoxRequest, db: Session = Depends(get_db)):
+    try:
+        # Retrieve the current diagnosis_id
+        # Create a new NoduleObject based on the bounding box
+        # Push that NoduleObject onto the database
 
-#         current_image_id = bounding_box_request.image_id
-#         bounding_box_list = bounding_box_request.bounding_box_list
+        diagnosis_id = bounding_box_request.diagnosis_id
+        new_nodule_list = bounding_box_request.bounding_box_list
+
+        current_nodules_props = await get_current_nodules_props(diagnosis_id, db)
+        updated_nodules_props = current_nodules_props['nodules']
+
+        for entries in new_nodule_list:
+            # Process the information of the bounding box
+            new_nodule_position = [entries.xCenter, entries.yCenter, entries.width, entries.height]
+            new_properties = {
+                'position': new_nodule_position,
+                'confidence': entries.confidence
+            }
+
+            updated_nodules_props.append(new_properties)
+            
+        
+        current_nodules_props['nodules'] = updated_nodules_props
+        print("--------------------------")
+        print(updated_nodules_props)
+        print(current_nodules_props)
+        print("--------------------------")
+
+        # if not current_nodules:
+        #     raise HTTPException(status_code=404, detail="Nodule not found")
+
+        # # Initialize properties array if it's null
+        # if current_nodules is None:
+        #     current_nodules = []
+
+        # # current_nodules.append(new_nodules)
+        status = await update_nodules_props(diagnosis_id, current_nodules_props, db)
+
+        return status
 
 
 
-#         # new_nodule = NoduleObject(image_id=nodule.image_id,
-#         #                           nodule_type_id=nodule.nodule_type_id,
-#         #                           position=nodule.position,
-#         #                           doctor_note=nodule.doctor_note,
-#         #                           intensity=nodule.intensity)
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+async def get_current_nodules_props(diagnosis_id: int, db: Session):
+    try:
+        nodule_id = db.query(Diagnosis.nodule_id).filter(Diagnosis.diagnosis_id == diagnosis_id).first()
+        current_nodules_props = db.query(NoduleObject.properties).filter(NoduleObject.nodule_id == nodule_id[0]).first()
+
+        return current_nodules_props[0]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
+async def update_nodules_props(diagnosis_id: int, props: list, db: Session):
+    try:
+        # Find a way to optimize this, we don't want it to be query twice in one run of the request
+        nodule_id = db.query(Diagnosis.nodule_id).filter(Diagnosis.diagnosis_id == diagnosis_id).first() 
+
+        # UPDATE table_name SET column_name = new_value WHERE condition;
+        nodule_obj = db.query(NoduleObject).filter(NoduleObject.nodule_id == nodule_id[0]).first()
+        print("======================")
+        print(nodule_obj)
+        print("======================")
+
+        nodule_obj.properties = props
+        db.commit()
+
+        return {
+            "status": "Successfully updated the database."
+        }
+
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occured: {str(e)}")
 
 """
 Format the predicted data returned by the AI into a JSON format.
@@ -395,6 +514,7 @@ async def get_latest_image_id(db: Session):
         raise HTTPException(status_code=500, detail=f"An error occured: {str(e)}" )
 
 async def push_nodule(nodule: NoduleCreate, db: Session):
+    print("Pushing nodule")
     try:
         new_nodule = NoduleObject(image_id=nodule.image_id,
                                   nodule_type_id=nodule.nodule_type_id,
@@ -402,7 +522,7 @@ async def push_nodule(nodule: NoduleCreate, db: Session):
                                   intensity=nodule.intensity,
                                   size=nodule.size,
                                   properties=nodule.properties)
-        
+
         db.add(new_nodule)
         db.commit()
         db.refresh(new_nodule)
@@ -416,11 +536,11 @@ async def push_nodule(nodule: NoduleCreate, db: Session):
                 "doctor_note": new_nodule.doctor_note,
                 "intensity": new_nodule.intensity,
                 "size": new_nodule.size,
-
-
             }
         }
+    
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 """
@@ -480,5 +600,24 @@ async def push_diagnosis(diagnosis: DiagnosisCreate, db: Session):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
     
+"""
+Get uploaded Image from local storage
+"""
+app.mount("/uploads", StaticFiles(directory=LOCAL_UPLOAD_DIR), name="uploads")
 
+@app.get('/images/{image_name}')
+async def get_image(image_name: str, db:Session = Depends(get_db)):
+    image = db.query(ScanImage).filter(ScanImage.image_name == image_name).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found") 
+    
+    relative_path = Path(image.photo_path)
+    if not relative_path.is_file():
+        return {"error": "Image not found on the server"}
+    
+    return FileResponse(relative_path)
 
+    # return {
+    #     "image_id": image.image_id,
+    #     "photo_path": image_url
+    # }

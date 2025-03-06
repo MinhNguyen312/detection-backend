@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 class ScanImageCreate(BaseModel):
     user_id: int
@@ -19,6 +19,7 @@ class NoduleCreate(BaseModel):
     doctor_note: str
     intensity: str
     size: str
+    properties: Optional[Dict[str, Any]] = None  # New field for JSONB
 
 class DiagnosisCreate(BaseModel):
     image_id: int
@@ -30,7 +31,7 @@ class BoundingBox(BaseModel):
     classId: int
     className: str
     # bbox: List[int]
-    confidence: int
+    confidence: float
     xCenter: float
     yCenter: float
     width: float
@@ -40,5 +41,5 @@ class BoundingBox(BaseModel):
     notes: str
 
 class BoundingBoxRequest(BaseModel):
-    image_id: int
+    diagnosis_id: int
     bounding_box_list: List[BoundingBox]

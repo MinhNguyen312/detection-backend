@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON, Date
+from sqlalchemy import Column, Integer, String, Float, Date, JSON
 from database import Base
 
 class Diagnosis(Base):
