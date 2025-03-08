@@ -132,14 +132,14 @@ def view_diagonsis(db: Session = Depends(get_db)):
 
     # Format the response
     response = [
-        {
+            {
             "diagnosis_id": diagnosis.diagnosis_id,
             "patient_first_name": patient.firstname,
             "patient_last_name": patient.lastname,
-            "date": "15/10/2024", # placeholder only
+            "date": "15/10/2024",
             "photo_path": image.photo_path,
-            "nodule_position": nodule.position,
-        }
+            "nodules": nodule.properties.get("nodules")
+            }
         for diagnosis, patient, image, nodule in results
     ]
 
@@ -165,7 +165,6 @@ def view_diagonsis(diagnosis_id: int, db: Session = Depends(get_db)):
         "patient_last_name": patient.lastname,
         "date": "15/10/2024",
         "photo_path": image.photo_path,
-        "nodule_position": nodule.position,
         "nodules": nodule.properties.get("nodules")
     }
 
@@ -337,7 +336,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-@app.post('/update-nodules')
+@app.put('/update-nodules')
 async def update_nodules(bounding_box_request: BoundingBoxRequest, db: Session = Depends(get_db)):
     try:
         # Retrieve the current diagnosis_id
@@ -348,7 +347,7 @@ async def update_nodules(bounding_box_request: BoundingBoxRequest, db: Session =
         new_nodule_list = bounding_box_request.bounding_box_list
 
         current_nodules_props = await get_current_nodules_props(diagnosis_id, db)
-        updated_nodules_props = current_nodules_props['nodules']
+        updated_nodules_props = [] #Empty so that we can append the new nodule properties (allow delete and update of nodules)
 
         for entries in new_nodule_list:
             # Process the information of the bounding box
@@ -357,7 +356,7 @@ async def update_nodules(bounding_box_request: BoundingBoxRequest, db: Session =
                 'position': new_nodule_position,
                 'confidence': entries.confidence
             }
-
+            
             updated_nodules_props.append(new_properties)
             
         
