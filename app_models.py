@@ -9,6 +9,7 @@ class Diagnosis(Base):
     nodule_id = Column(Integer)
     status = Column(String)
     diagnosis_description = Column(String)
+    diagnosis_date = Column(String)
 
 class Patient(Base):
     __tablename__ = "patient"

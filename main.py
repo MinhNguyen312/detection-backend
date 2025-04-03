@@ -1,4 +1,5 @@
-from fastapi import FastAPI, File, Depends, HTTPException, UploadFile
+from typing import List
+from fastapi import FastAPI, File, Depends, HTTPException, UploadFile, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sys import platform
@@ -7,6 +8,8 @@ from contextlib import asynccontextmanager
 import torch
 import io
 import os
+from openai import OpenAI
+from datetime import datetime
 from fastapi.responses import FileResponse
 
 from sqlalchemy.orm import Session
@@ -53,6 +56,10 @@ s3 = boto3.client(
 # S3 bucket name
 BUCKET_NAME = "lung.images"
 
+# Open AI Connection
+client = OpenAI(
+    api_key=config["OPENAI_API_KEY"],
+)
 
 # On startup, load the model
 @asynccontextmanager
@@ -122,7 +129,7 @@ Example:
         ]
 """
 @app.get('/view-diagnosis')
-def view_diagonsis(db: Session = Depends(get_db)):
+def view_diagnosis(db: Session = Depends(get_db)):
     # Query the database
     results = db.query(Diagnosis, Patient, ScanImage, NoduleObject)\
         .join(ScanImage, Diagnosis.image_id == ScanImage.image_id)\
@@ -136,9 +143,11 @@ def view_diagonsis(db: Session = Depends(get_db)):
             "diagnosis_id": diagnosis.diagnosis_id,
             "patient_first_name": patient.firstname,
             "patient_last_name": patient.lastname,
-            "date": "15/10/2024",
+            "date": diagnosis.diagnosis_date,
             "photo_path": image.photo_path,
-            "nodules": nodule.properties.get("nodules")
+            "nodules": nodule.properties.get("nodules"),
+            "doctor_note": [nodule.properties.get("nodules")[i].get("doctor_note") for i in range(len(nodule.properties.get("nodules")))] 
+                if len(nodule.properties.get("nodules")) > 0 else None , #   Return all notes from each nodule, if there are any
             }
         for diagnosis, patient, image, nodule in results
     ]
@@ -147,7 +156,7 @@ def view_diagonsis(db: Session = Depends(get_db)):
 
 # API endpoint to get diagnosis by id
 @app.get('/view-diagnosis/{diagnosis_id}')
-def view_diagonsis(diagnosis_id: int, db: Session = Depends(get_db)):
+def view_diagnosis(diagnosis_id: int, db: Session = Depends(get_db)):
     # Query the database
     result = db.query(Diagnosis, Patient, ScanImage, NoduleObject)\
         .join(ScanImage, Diagnosis.image_id == ScanImage.image_id)\
@@ -161,9 +170,10 @@ def view_diagonsis(diagnosis_id: int, db: Session = Depends(get_db)):
     # Format the response
     response = {
         "diagnosis_id": diagnosis.diagnosis_id,
+        "patient_id": patient.patient_id,
         "patient_first_name": patient.firstname,
         "patient_last_name": patient.lastname,
-        "date": "15/10/2024",
+        "date": diagnosis.diagnosis_date,
         "photo_path": image.photo_path,
         "nodules": nodule.properties.get("nodules")
     }
@@ -216,124 +226,241 @@ Example:
             ]
         ]
 """
-@app.post('/upload')
-async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
+# @app.post('/upload')
+# async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
-    global model
-    if model is None:
-        return {"error":"Model not initialized"}
+#     global model
+#     if model is None:
+#         return {"error":"Model not initialized"}
     
-    contents = await file.read()
+#     contents = await file.read()
     
-    image = Image.open(io.BytesIO(contents))
+#     image = Image.open(io.BytesIO(contents))
 
-    # Save the image to local storage
-    unique_image_name = f"{uuid.uuid4()}.{image.format.lower()}"
-    local_file_path = LOCAL_UPLOAD_DIR / unique_image_name
-    image.save(local_file_path)
+#     # Save the image to local storage
+#     unique_image_name = f"{uuid.uuid4()}.{image.format.lower()}"
+#     local_file_path = LOCAL_UPLOAD_DIR / unique_image_name
+#     image.save(local_file_path)
 
-    results = model(image)
+#     results = model(image)
 
-    if platform == "win32":
-        pathlib.PosixPath = temp         
+#     if platform == "win32":
+#         pathlib.PosixPath = temp         
 
-    json_results = results_to_json(results, model)
+#     json_results = results_to_json(results, model)
 
-    # adding new image entry
-    new_user_id = 1 # placeholder, gonna be updated later after login function is implemented
-    new_patient_id = 1 # placeholder, gonna be updated later after clearance on how patient info is obtained
-    new_image_type_id = 1 # placeholder, gonna be updated later after clearance on how to store images, currently set to "RAW"
-    new_image_path = local_file_path
-    new_image_name = unique_image_name
-    new_upload_date = datetime.today().strftime('%Y-%m-%d')
-    new_description = "" # placeholder, gonna be updated later after clearance on how to add image descriptions, currently set to an empty string
-    new_image_format = image.format.lower()
+#     # adding new image entry
+#     new_user_id = 1 # placeholder, gonna be updated later after login function is implemented
+#     new_patient_id = 1 # placeholder, gonna be updated later after clearance on how patient info is obtained
+#     new_image_type_id = 1 # placeholder, gonna be updated later after clearance on how to store images, currently set to "RAW"
+#     new_image_path = local_file_path
+#     new_image_name = unique_image_name
+#     new_upload_date = datetime.today().strftime('%Y-%m-%d')
+#     new_description = "" # placeholder, gonna be updated later after clearance on how to add image descriptions, currently set to an empty string
+#     new_image_format = image.format.lower()
     
-    # Prepping the metadata of the uploaded image
-    image_to_push = ScanImageCreate(user_id=new_user_id,
-                                    patient_id=new_patient_id,
-                                    image_type_id=new_image_type_id,
-                                    image_name=new_image_name,
-                                    description=new_description,
-                                    upload_date=new_upload_date,
-                                    file_format=new_image_format,
-                                    photo_path=str(new_image_path))
+#     # Prepping the metadata of the uploaded image
+#     image_to_push = ScanImageCreate(user_id=new_user_id,
+#                                     patient_id=new_patient_id,
+#                                     image_type_id=new_image_type_id,
+#                                     image_name=new_image_name,
+#                                     description=new_description,
+#                                     upload_date=new_upload_date,
+#                                     file_format=new_image_format,
+#                                     photo_path=str(new_image_path))
     
-    # Push the data onto the database
-    await push_image(image_to_push, db)
+#     # Push the data onto the database
+#     await push_image(image_to_push, db)
 
-    # Get the latest image id that was recently added
-    latest_image_id = await get_latest_image_id(db)
+#     # Get the latest image id that was recently added
+#     latest_image_id = await get_latest_image_id(db)
 
-    # Create list of nodules
-    nodules = []
+#     # Create list of nodules
+#     nodules = []
 
-    # Iterate through each nodule object returned by the AI after analyzing the uploaded image and add those nodules metadata into the db
-    for index in range(len(json_results[0])):
-        # Prepping the information needed for the nodule
+#     # Iterate through each nodule object returned by the AI after analyzing the uploaded image and add those nodules metadata into the db
+#     for index in range(len(json_results[0])):
+#         # Prepping the information needed for the nodule
        
 
-        # # Creating the nodule to add into the db
-        # nodule_to_add = NoduleCreate(image_id=latest_image_id,
-        #                              nodule_type_id=new_nodule_type_id,
-        #                              position=new_position,
-        #                              doctor_note=new_doctor_note,
-        #                              intensity=new_intensity,
-        #                              size=new_size)
+#         # # Creating the nodule to add into the db
+#         # nodule_to_add = NoduleCreate(image_id=latest_image_id,
+#         #                              nodule_type_id=new_nodule_type_id,
+#         #                              position=new_position,
+#         #                              doctor_note=new_doctor_note,
+#         #                              intensity=new_intensity,
+#         #                              size=new_size)
         
-        # # add the ongoing specified nodule
-        # await push_nodule(nodule_to_add, db)
+#         # # add the ongoing specified nodule
+#         # await push_nodule(nodule_to_add, db)
 
-        print(json_results[0][index].get('bbox'))
-        print(json_results[0][index].get('confidence'))
+#         print(json_results[0][index].get('bbox'))
+#         print(json_results[0][index].get('confidence'))
 
-        nodules.append({"position": json_results[0][index].get('bbox'),
-                        "confidence": json_results[0][index].get('confidence')})
+#         nodules.append({"position": json_results[0][index].get('bbox'),
+#                         "confidence": json_results[0][index].get('confidence')})
     
-    print(nodules)
-    new_nodule_type_id = 1 # Placeholder
-    # new_position = json_results[0][index].get('bbox')
-    new_doctor_note = "Lung Problem" # Placeholder
-    new_intensity = "Moderate" # Placeholder
-    new_size = "Small" # Placeholder
+#     print(nodules)
+#     new_nodule_type_id = 1 # Placeholder
+#     # new_position = json_results[0][index].get('bbox')
+#     new_doctor_note = "Lung Problem" # Placeholder
+#     new_intensity = "Moderate" # Placeholder
+#     new_size = "Small" # Placeholder
 
 
-    # Creating the nodule to add into the db
-    nodule_to_add = NoduleCreate(image_id=latest_image_id,
-                                     nodule_type_id=new_nodule_type_id,
-                                     position=[],
-                                     doctor_note=new_doctor_note,
-                                     intensity=new_intensity,
-                                     size=new_size,
-                                     properties={"nodules": nodules})
+#     # Creating the nodule to add into the db
+#     nodule_to_add = NoduleCreate(image_id=latest_image_id,
+#                                      nodule_type_id=new_nodule_type_id,
+#                                      position=[],
+#                                      doctor_note=new_doctor_note,
+#                                      intensity=new_intensity,
+#                                      size=new_size,
+#                                      properties={"nodules": nodules})
     
-    # add the ongoing specified nodule
-    await push_nodule(nodule_to_add, db)
+#     # add the ongoing specified nodule
+#     await push_nodule(nodule_to_add, db)
         
-    # Prepping the information needed for diagnosis
-    latest_nodule_id = await get_latest_nodule_id(db)
-    new_status = "" # Placeholder
-    new_diagnosis_description = "" # Placeholder 
+#     # Prepping the information needed for diagnosis
+#     latest_nodule_id = await get_latest_nodule_id(db)
+#     new_status = "" # Placeholder
+#     new_diagnosis_description = "" # Placeholder 
 
+#     try:
+#         # Upload the image to S3
+#         s3_key = f"uploads/{uuid.uuid4()}.{image.format.lower()}"
+#         with local_file_path.open("rb") as f:
+#             s3.upload_fileobj(f, BUCKET_NAME, s3_key)
+
+        
+        
+#         # Creating the diagnosis to add
+#         diagnosis_to_add = DiagnosisCreate(image_id=latest_image_id,
+#                                            nodule_id=latest_nodule_id,
+#                                            status=new_status,
+#                                            diagnosis_description=new_diagnosis_description) 
+        
+#         await push_diagnosis(diagnosis_to_add, db)
+
+#         return nodules
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+# Add get_latest_diagnosis_id helper function
+
+async def get_latest_diagnosis_id(db: Session = Depends(get_db)):
     try:
-        # Upload the image to S3
-        s3_key = f"uploads/{uuid.uuid4()}.{image.format.lower()}"
-        with local_file_path.open("rb") as f:
-            s3.upload_fileobj(f, BUCKET_NAME, s3_key)
-
-        
-        
-        # Creating the diagnosis to add
-        diagnosis_to_add = DiagnosisCreate(image_id=latest_image_id,
-                                           nodule_id=latest_nodule_id,
-                                           status=new_status,
-                                           diagnosis_description=new_diagnosis_description) 
-        
-        await push_diagnosis(diagnosis_to_add, db)
-
-        return nodules
+        latest_diagnosis_id = db.query(Diagnosis.diagnosis_id).order_by(desc(Diagnosis.diagnosis_id)).first()
+        if latest_diagnosis_id:
+            return latest_diagnosis_id[0]
+        else:
+            return None
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+@app.post('/upload')
+async def upload(patient_id: str, files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+    global model
+    if model is None:
+        return {"error": "Model not initialized"}
+    
+    all_results = []
+    
+    for f in files:
+        try:
+            content = await f.read()
+            image = Image.open(io.BytesIO(content))
+
+            # Save the image to local storage under patient id's folder
+            unique_image_name = f"{uuid.uuid4()}.{image.format.lower()}"
+            patient_dir = LOCAL_UPLOAD_DIR / patient_id
+            patient_dir.mkdir(exist_ok=True)
+            local_file_path = patient_dir / unique_image_name
+            image.save(local_file_path)
+
+            # Process image with AI model
+            results = model(image)
+            if platform == "win32":
+                pathlib.PosixPath = temp         
+            json_results = results_to_json(results, model)
+
+            # Create image entry
+            image_to_push = ScanImageCreate(
+                user_id=1,  # placeholder
+                patient_id=patient_id,
+                image_type_id=1,  # placeholder
+                image_name=unique_image_name,
+                description="",
+                upload_date=datetime.today().strftime('%Y-%m-%d'),
+                file_format=image.format.lower(),
+                photo_path=str(local_file_path)
+            )
+            
+            await push_image(image_to_push, db)
+            latest_image_id = await get_latest_image_id(db)
+            latest_diagnosis_id = await get_latest_diagnosis_id(db)
+
+            # Process nodules for this image
+            nodules = []
+            for detection in json_results[0]:  # Access first batch's detections
+                nodules.append({
+                    "position": detection['bbox'],
+                    "confidence": detection['confidence']
+                })
+
+
+            # Use GPT to generate a brief diagnosis
+            diagnosis = generate_diagnosis(f"{patient_id}/{unique_image_name}", nodules)
+            nodules_data = diagnosis["nodules"]  # Extract nodules data from GPT response
+            
+            for i, nodule in enumerate(nodules):
+                if i < len(nodules_data):
+                    gpt_data = nodules_data[i]  # Get the corresponding nodule from GPT response
+                    nodule["severity"] = gpt_data["malignancy_risk"]
+                    nodule["doctor_note"] = gpt_data["justification"] + " " + gpt_data["recommendation"]
+
+
+
+            
+            # Create nodule entry
+            nodule_to_add = NoduleCreate(
+                image_id=latest_image_id,
+                nodule_type_id=1,  # Placeholder
+                position=[],
+                doctor_note="",  # Placeholder
+                intensity="",  # Placeholder
+                size="",  # Placeholder
+                properties={"nodules": nodules}
+            )
+            
+            await push_nodule(nodule_to_add, db)
+            latest_nodule_id = await get_latest_nodule_id(db)
+
+            # Upload to S3
+            s3_key = f"uploads/{patient_id}/{unique_image_name}"
+            with local_file_path.open("rb") as f:
+                s3.upload_fileobj(f, BUCKET_NAME, s3_key)
+
+            # Create diagnosis entry
+            diagnosis_to_add = DiagnosisCreate(
+                image_id=latest_image_id,
+                nodule_id=latest_nodule_id,
+                status="",  # Placeholder
+                diagnosis_date=datetime.today().strftime('%Y-%m-%d'),
+                diagnosis_description=""  # Placeholder
+            )
+            
+            await push_diagnosis(diagnosis_to_add, db)
+
+            all_results.append({
+                "diagnosis_id": latest_diagnosis_id,
+                "image_name": unique_image_name,
+                "nodules": nodules
+            })
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error processing {f.filename}: {str(e)}")
+
+    return all_results
 
 
 @app.put('/update-nodules')
@@ -354,7 +481,9 @@ async def update_nodules(bounding_box_request: BoundingBoxRequest, db: Session =
             new_nodule_position = [entries.xCenter, entries.yCenter, entries.width, entries.height]
             new_properties = {
                 'position': new_nodule_position,
-                'confidence': entries.confidence
+                'confidence': entries.confidence,
+                'severity': entries.severity,
+                'doctor_note': entries.doctor_note,
             }
             
             updated_nodules_props.append(new_properties)
@@ -579,6 +708,7 @@ async def push_diagnosis(diagnosis: DiagnosisCreate, db: Session):
         new_diagnosis = Diagnosis(image_id=diagnosis.image_id,
                                   nodule_id=diagnosis.nodule_id,
                                   status=diagnosis.status,
+                                  diagnosis_date=datetime.today().strftime('%Y-%m-%d'),
                                   diagnosis_description=diagnosis.diagnosis_description)
         
         db.add(new_diagnosis)
@@ -591,9 +721,8 @@ async def push_diagnosis(diagnosis: DiagnosisCreate, db: Session):
                 "image_id": new_diagnosis.image_id,
                 "nodule_id": new_diagnosis.nodule_id,
                 "status": new_diagnosis.status,
-                "diagnosis_description": new_diagnosis.diagnosis_description
-
-
+                "diagnosis_description": new_diagnosis.diagnosis_description,
+                "diagnosis_date": new_diagnosis.diagnosis_date
             }
         }
     except Exception as e:
@@ -604,19 +733,137 @@ Get uploaded Image from local storage
 """
 app.mount("/uploads", StaticFiles(directory=LOCAL_UPLOAD_DIR), name="uploads")
 
-@app.get('/images/{image_name}')
-async def get_image(image_name: str, db:Session = Depends(get_db)):
-    image = db.query(ScanImage).filter(ScanImage.image_name == image_name).first()
-    if not image:
-        raise HTTPException(status_code=404, detail="Image not found") 
+@app.get('/images/{patient_id}/{image_name}')
+async def get_image(patient_id: str, image_name: str, db: Session = Depends(get_db)):
+    image = db.query(ScanImage).filter(
+        ScanImage.image_name == image_name,
+        ScanImage.patient_id == patient_id
+    ).first()
     
-    relative_path = Path(image.photo_path)
-    if not relative_path.is_file():
-        return {"error": "Image not found on the server"}
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    # Construct path including patient_id directory
+    relative_path = LOCAL_UPLOAD_DIR/ patient_id / image_name
+    print(relative_path)
+    # if not relative_path.is_file():
+    #     return {"error": "Image not found on the server"}
     
     return FileResponse(relative_path)
 
-    # return {
-    #     "image_id": image.image_id,
-    #     "photo_path": image_url
-    # }
+
+"""
+    Diagnosis pagination
+"""
+
+def get_pagination_params(
+        page: int = Query(1,gt=0),
+
+        per_page: int = Query(10, gt=0),
+):
+    return {"page": page, "per_page": per_page}
+
+@app.get('/diagnosis')
+def get_diagnosis(
+        pagination: dict = Depends(get_pagination_params),
+        db: Session = Depends(get_db)
+):
+    page = pagination.get("page")
+    per_page = pagination.get("per_page")
+
+    # Calculate offset
+    offset = (page - 1) * per_page
+
+    results = db.query(Diagnosis, Patient, ScanImage, NoduleObject)\
+        .join(ScanImage, Diagnosis.image_id == ScanImage.image_id)\
+        .join(Patient, ScanImage.patient_id == Patient.patient_id)\
+        .join(NoduleObject, Diagnosis.nodule_id == NoduleObject.nodule_id)\
+        .offset(offset).limit(per_page).all()
+        
+
+    # Format the response
+    response = [
+            {
+            "diagnosis_id": diagnosis.diagnosis_id,
+            "patient_first_name": patient.firstname,
+            "patient_last_name": patient.lastname,
+            "date": diagnosis.diagnosis_date,
+            "photo_path": image.photo_path,
+            "nodules": nodule.properties.get("nodules"),
+            "doctor_note": [nodule.properties.get("nodules")[i].get("doctor_note") for i in range(len(nodule.properties.get("nodules")))] 
+                if len(nodule.properties.get("nodules")) > 0 else None , #   Return all notes from each nodule, if there are any
+            }
+        for diagnosis, patient, image, nodule in results
+    ]
+
+    return response
+
+"""
+Use GPT to generate a diagnosis based on the nodule properties.
+"""
+def generate_diagnosis(image_url,detections):
+    print("Generating diagnosis...")
+    print(f"https://caf3-116-111-184-66.ngrok-free.app/images/{image_url}")
+
+    response = client.chat.completions.create(
+        model="gpt-4-turbo",
+        messages=[
+            {"role": "system", "content": "You are an AI radiology assistant."},
+            {"role": "user", "content": f""" 
+            Ảnh CT phổi sau đã được khoanh vùng bằng mô hình AI.
+            Vui lòng phân tích vị trí nốt phổi trong ảnh và kết hợp với dữ liệu bệnh nhân (nếu có):
+            - Tuổi: {"Không rõ"}
+            - Giới tính: {"Không rõ"}
+            - Tiền sử hút thuốc: {"Không rõ"}
+            - Triệu chứng: {"Không rõ"}
+            - Có ảnh CT cũ để so sánh: {"Không rõ"}
+
+            Hãy đánh giá nguy cơ ác tính của từng nốt phổi và trả về kết quả theo định dạng JSON với các thông tin sau:
+            - `nodules`: danh sách các nốt với thông tin:
+            - `position`: vị trí nốt trên ảnh
+            - `malignancy_risk`: nguy cơ ác tính BẰNG TIẾNG ANH (mild, moderate, severe, critical)
+            - `justification`: lý do đánh giá nguy cơ BẰNG TIẾNG VIỆT (giải thích chi tiết về đặc điểm hình ảnh, vị trí, kích thước và các yếu tố nguy cơ)
+            - `recommendation`: hướng xử lý tiếp theo BẰNG TIẾNG VIỆT (đề xuất cụ thể về theo dõi, sinh thiết hoặc phẫu thuật dựa theo hướng dẫn y khoa)
+
+            Trả lời **CHỈ** dưới dạng JSON thuần túy, không thêm markdown, code blocks hoặc backticks.
+            
+            Nốt phổi: {detections}""",
+         "image": {"type": "image_url", "image_url": f"https://caf3-116-111-184-66.ngrok-free.app/images/{image_url}"}},
+        ],
+        max_tokens=1500,
+        temperature=0.3
+    )
+
+    result = response.choices[0].message.content
+    print(f"Raw GPT response: {result}")
+
+    if result.startswith("```"):
+            # Find the position of the first newline after the opening ```
+            first_newline = result.find("\n")
+            if first_newline != -1:
+                # Find the position of the closing ```
+                closing_backticks = result.rfind("```")
+                if closing_backticks > first_newline:
+                    # Extract content between the backticks, ignoring the first line (```json)
+                    result = result[first_newline+1:closing_backticks].strip()
+                else:
+                    # If closing backticks not found, take everything after first line
+                    result = result[first_newline+1:].strip()
+        
+
+    try:
+        parsed_json = json.loads(result)
+        print(f"Parsed JSON: {parsed_json}")
+        return parsed_json
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        return {
+            "error": "Failed to decode JSON response from GPT."
+        }
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return {
+            "error": "An unexpected error occurred."
+        }
+    
+    

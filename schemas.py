@@ -26,6 +26,7 @@ class DiagnosisCreate(BaseModel):
     nodule_id: int
     status: str
     diagnosis_description: str
+    diagnosis_date: date
 
 class BoundingBox(BaseModel):
     classId: int
@@ -38,7 +39,7 @@ class BoundingBox(BaseModel):
     height: float
     isTemp: bool # no need to store this into db
     severity: str
-    notes: str
+    doctor_note: str
 
 class BoundingBoxRequest(BaseModel):
     diagnosis_id: int
