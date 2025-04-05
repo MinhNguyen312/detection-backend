@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from database import Base, engine, get_db
 from pathlib import Path
+from dotenv import load_dotenv
 
 from app_models import Diagnosis, Patient, ScanImage, NoduleObject
 from schemas import ScanImageCreate, NoduleCreate, DiagnosisCreate, BoundingBox, BoundingBoxRequest
@@ -24,6 +25,8 @@ import boto3
 import uuid
 from datetime import datetime
 
+# .env
+load_dotenv()
 
 # Create all tables
 Base.metadata.create_all(bind=engine)   
@@ -58,7 +61,7 @@ BUCKET_NAME = "lung.images"
 
 # Open AI Connection
 client = OpenAI(
-    api_key=config["OPENAI_API_KEY"],
+    api_key=os.getenv("OPENAI_KEY"),
 )
 
 # On startup, load the model
@@ -363,6 +366,8 @@ async def upload(patient_id: str, files: List[UploadFile] = File(...), db: Sessi
     if model is None:
         return {"error": "Model not initialized"}
     
+    patient = db.query(Patient).filter(Patient.patient_id == patient_id).first()
+    
     all_results = []
     
     for f in files:
@@ -409,7 +414,7 @@ async def upload(patient_id: str, files: List[UploadFile] = File(...), db: Sessi
 
 
             # Use GPT to generate a brief diagnosis
-            diagnosis = generate_diagnosis(f"{patient_id}/{unique_image_name}", nodules)
+            diagnosis = generate_diagnosis(f"{patient_id}/{unique_image_name}", nodules, patient)
             nodules_data = diagnosis["nodules"]  # Extract nodules data from GPT response
             
             for i, nodule in enumerate(nodules):
@@ -801,7 +806,7 @@ def get_diagnosis(
 """
 Use GPT to generate a diagnosis based on the nodule properties.
 """
-def generate_diagnosis(image_url,detections):
+def generate_diagnosis(image_url,detections,patient: Patient):
     print("Generating diagnosis...")
     print(f"https://caf3-116-111-184-66.ngrok-free.app/images/{image_url}")
 
@@ -812,23 +817,23 @@ def generate_diagnosis(image_url,detections):
             {"role": "user", "content": f""" 
             Ảnh CT phổi sau đã được khoanh vùng bằng mô hình AI.
             Vui lòng phân tích vị trí nốt phổi trong ảnh và kết hợp với dữ liệu bệnh nhân (nếu có):
-            - Tuổi: {"Không rõ"}
-            - Giới tính: {"Không rõ"}
+            - Tuổi: {calculate_age(patient.dob)}
+            - Giới tính: {patient.sex}
             - Tiền sử hút thuốc: {"Không rõ"}
-            - Triệu chứng: {"Không rõ"}
+            - Triệu chứng: {patient.symptom}
             - Có ảnh CT cũ để so sánh: {"Không rõ"}
 
             Hãy đánh giá nguy cơ ác tính của từng nốt phổi và trả về kết quả theo định dạng JSON với các thông tin sau:
             - `nodules`: danh sách các nốt với thông tin:
             - `position`: vị trí nốt trên ảnh
             - `malignancy_risk`: nguy cơ ác tính BẰNG TIẾNG ANH (mild, moderate, severe, critical)
-            - `justification`: lý do đánh giá nguy cơ BẰNG TIẾNG VIỆT (giải thích chi tiết về đặc điểm hình ảnh, vị trí, kích thước và các yếu tố nguy cơ)
+            - `justification`: lý do đánh giá nguy cơ BẰNG TIẾNG VIỆT (giải thích chi tiết về đặc điểm hình ảnh, vị trí, kích thước và các yếu tố nguy cơ) và **ước tính phần trăm** (ví dụ: 15–25%) theo mô hình Brock hoặc guideline tương đương.
             - `recommendation`: hướng xử lý tiếp theo BẰNG TIẾNG VIỆT (đề xuất cụ thể về theo dõi, sinh thiết hoặc phẫu thuật dựa theo hướng dẫn y khoa)
 
             Trả lời **CHỈ** dưới dạng JSON thuần túy, không thêm markdown, code blocks hoặc backticks.
             
             Nốt phổi: {detections}""",
-         "image": {"type": "image_url", "image_url": f"https://caf3-116-111-184-66.ngrok-free.app/images/{image_url}"}},
+         "image": {"type": "image_url", "image_url": f"https://b149-58-186-38-252.ngrok-free.app/images/{image_url}"}},
         ],
         max_tokens=1500,
         temperature=0.3
@@ -867,3 +872,8 @@ def generate_diagnosis(image_url,detections):
         }
     
     
+def calculate_age(dob):
+    today = datetime.today()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month,dob.day))
+
+    return age

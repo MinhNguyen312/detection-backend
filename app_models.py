@@ -9,7 +9,7 @@ class Diagnosis(Base):
     nodule_id = Column(Integer)
     status = Column(String)
     diagnosis_description = Column(String)
-    diagnosis_date = Column(String)
+    diagnosis_date = Column(Date)
 
 class Patient(Base):
     __tablename__ = "patient"
@@ -24,6 +24,7 @@ class Patient(Base):
     address = Column(String)
     health_insurance = Column(String)
     personal_identity = Column(String)
+    symptom = Column(String)
 
 class ScanImage(Base):
     __tablename__ = "image"
